@@ -2,6 +2,7 @@ package netsh
 
 import (
 	"fmt"
+	"time"
 	"regexp"
 	"strconv"
 	"strings"
@@ -17,6 +18,8 @@ type Interface interface {
 	EnsurePortProxyRule(args []string) (bool, error)
 	// DeletePortProxyRule deletes the specified portproxy rule.  If the rule did not exist, return error.
 	DeletePortProxyRule(args []string) error
+	// EnsureIPAddress checks if the specified IP Address is added to specified interface, if not, add it.  If the address existed, return true.
+	EnsureIPAddress(args []string, intName string, ip net.IP) (bool, error)
 	// DeleteIPAddress checks if the specified IP address is present and, if so, deletes it.
 	DeleteIPAddress(args []string) error
 	// Restore runs `netsh exec` to restore portproxy or addresses using a file.
@@ -265,6 +268,65 @@ func (runner *runner) DeletePortProxyRule(args []string) error {
 		}
 	}
 	return fmt.Errorf("error deleting portproxy rule: %v: %s", err, out)
+}
+
+// checkIPExists checks if an IP address exists in 'netsh interface IPv4 show address' output
+func checkIPExists(ipToCheck string, args []string, runner *runner) (bool, error) {
+	ipAddress, err := runner.exec.Command(cmdNetsh, args...).CombinedOutput()
+	if err != nil {
+		return false, err
+	}
+	ipAddressString := string(ipAddress[:])
+	showAddressArray := strings.Split(ipAddressString, "\n")
+	for _, showAddress := range showAddressArray {
+		if strings.Contains(showAddress, "IP") {
+			ipFromNetsh := getIP(showAddress)
+			if ipFromNetsh == ipToCheck {
+				return true, nil
+			}
+		}
+	}
+
+	return false, nil
+}
+
+func (runner *runner) EnsureIPAddress(args []string, intName string, ip net.IP) (bool, error) {
+	// Check if the ip address exists
+	argsShowAddress := []string{
+		"interface", "ipv4", "show", "address",
+		"name=" + intName,
+	}
+
+	ipToCheck := ip.String()
+
+	exists, _ := checkIPExists(ipToCheck, argsShowAddress, runner)
+	if exists == true {
+		return true, nil
+	}
+
+	// IP Address is not already added, add it now
+	out, err := runner.exec.Command(cmdNetsh, args...).CombinedOutput()
+
+	if err == nil {
+		// Once the IP Address is added, it takes a bit to initialize and show up when querying for it
+		// Query all the IP addresses and see if the one we added is present
+		// PS: We are using netsh interface IPv4 show address here to query all the IP addresses, instead of
+		// querying net.InterfaceAddrs() as it returns the IP address as soon as it is added even though it is uninitialized
+		for {
+			if exists, _ := checkIPExists(ipToCheck, argsShowAddress, runner); exists {
+				return true, nil
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
+	if ee, ok := err.(utilexec.ExitError); ok {
+		// netsh uses exit(0) to indicate a success of the operation,
+		// as compared to a malformed commandline, for example.
+		if ee.Exited() && ee.ExitStatus() != 0 {
+			return false, nil
+		}
+	}
+	return false, fmt.Errorf("error adding IPv4 address: %v: %s", err, out)
 }
 
 // DeleteIPAddress checks if the specified IP address is present and, if so, deletes it.
