@@ -17,7 +17,9 @@ limitations under the License.
 package testing
 
 import (
-	netsh "github.com/rakelkar/gonetsh/netsh"
+	"net"
+
+	netsh "github.com/norshtein/gonetsh/netsh"
 )
 
 // no-op implementation of netsh Interface
@@ -45,6 +47,11 @@ func (*FakeNetsh) EnsurePortProxyRule(args []string) (bool, error) {
 func (*FakeNetsh) DeletePortProxyRule(args []string) error {
 	// Do Nothing
 	return nil
+}
+
+func (*FakeNetsh) EnsureIPAddress(args []string, intName string, ip net.IP) (bool, error) {
+	// Do Nothing
+	return true, nil
 }
 
 // DeleteIPAddress checks if the specified IP address is present and, if so, deletes it.
